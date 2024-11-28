@@ -5,7 +5,7 @@ Due to the incomplete backend API interface provided by ComfyUI, it is very inco
 
 ## Features
 - Support deploying **any** ComfyUI workflow in a factory-like manner.
-- Integrate and schedule multiple Comfyui services.
+- Integrate and schedule multiple Comfyui services, provide services to multiple clients.
 - Store the generated image in S3.
 - Monitor ComfyUI service and notify the client through **webhook** when image generation is complete.
 - Automatically clean up excess local input and output image files.
@@ -24,23 +24,23 @@ git clone https://github.com/Poseidon-fan/ComfyUI-server.git
 
 Create `.env` file in ComfyUI-server root folder with the following variables:
 ```text
-COMFY_ENDPOINTS = "localhost:8188,localhost:8189"      # comfyui endpoints, separated by commas
+COMFYUI_ENDPOINTS = "localhost:8188,localhost:8189,localhost:8190"   # comfyui endpoints, separated by commas
 
-AWS_SECRET_ACCESS_KEY = "your_secret_access_key"       # AWS secret access key
-AWS_ACCESS_KEY_ID = "your_access_key_id"               # AWS access key id
-S3_BUCKET = "your_S3_bucket_name"                      # S3 bucket name
-S3_REGION_NAME = "your_S3_region_name"                 # S3 region
+AWS_SECRET_ACCESS_KEY = "secret_access_key"                          # your aws secret access key
+AWS_ACCESS_KEY_ID = "access_key_id"                                  # your aws access key id
+S3_BUCKET = "comfyui-server"                                         # your s3 bucket name
+S3_REGION_NAME = "us-west-1"                                         # your s3 region name
 
-RDB_USERNAME = "root"                                  # Postgres username
-RDB_PASSWORD = "123456"                                # Postgres password
-RDB_HOST = "localhost"                                 # Postgres host
-RDB_PORT = "5432"                                      # Postgres port
-RDB_NAME = "comfy"                                     # Postgres database name
+RDB_USERNAME = "root"                                                # postgres username
+RDB_PASSWORD = "123456"                                              # postgres password
+RDB_HOST = "localhost"                                               # postgres host
+RDB_PORT = "5432"                                                    # postgres port
+RDB_NAME = "comfy"                                                   # postgres database name
 
-CALL_BACK_BASE_URL = "http://localhost:8000/callback"  # webhook callback url
-FALLBACK_PATH = "fallback"                             # fallback local path for error files
-SERVICE_PORT = 8000                                    # server port
-ROUTE_PREFIX = "/api/v1"                               # api route prefix
+DEFAULT_FAILED_IMAGE_PATH = "../tmp/failed_images"                   # path of the failed images
+
+SERVICE_PORT = "8000"                                                # service port
+ROUTE_PREFIX = "/api/v1"                                             # api route prefix
 ```
 
 3. install [fileCleaner node](https://github.com/Poseidon-fan/ComfyUI-fileCleaner)
@@ -87,60 +87,62 @@ The core code is in `src/api` folder, which contains the following files:
 # src/api/__init__.py
 
 class ServiceType(Enum):
-    TEXT2IMG = 'text2img'
-    IMG2IMG = 'img2img'
+    TEXT2IMG = "text2img"
+    IMG2IMG = "img2img"
 
 
 class RequestDTO(BaseModel):
     service_type: ServiceType
-    id: int
+    client_task_id: str
+    client_callback_url: str
     params: dict
 
-@router.post('')
+
+@router.post("")
 async def queue_prompt(request_dto: RequestDTO):
-    """commit a prompt to the comfy server"""
+    """commit a prompt to the comfyui server"""
     service_func = getattr(Service, request_dto.service_type.value)
-    return await service_func(request_dto.id, request_dto.params)
+    return await service_func(request_dto.client_task_id, request_dto.client_callback_url, request_dto.params)
 ```
 The ServiceType enum class contains the service types that can be provided, and the RequestDTO class is used to receive the request parameters. The `queue_prompt` function is the main entry point for the external interface, which will call the corresponding service function according to the service type.
 
 ```python
 # src/api/service.py
-def _schedule_comfy_server():
-    """schedule the comfy server with the least queue remaining"""
-    return min(comfy_servers, key=lambda x: x.queue_remaining)
+def _get_comfyui_server():
+    """schedule the comfyui server with the least queue remaining"""
+    return min(comfyui_servers, key=lambda x: x.queue_remaining)
 
 
 class Service:
     @staticmethod
-    async def text2img(client_task_id: int, params: dict) -> Record:
-        comfy_server = _schedule_comfy_server()
-        text = params.get('text')
-        prompt_str = TEXT2IMG_PROMPT_TEMPLATE.substitute(text=text)
+    async def text2img(client_task_id: str, client_callback_url: str, params: dict) -> ComfyUIRecord:
+        comfyui_server = _get_comfyui_server()
+        text = params.get("text")
+        prompt_str = TEXT2IMG_COMFYUI_PROMPT_TEMPLATE.substitute(text=text)
         prompt_json = json.loads(prompt_str)
-        return await comfy_server.queue_prompt(client_task_id, prompt_json)
+        return await comfyui_server.queue_prompt(client_task_id, client_callback_url, prompt_json)
 
     @staticmethod
-    async def img2img(client_task_id: int, params: dict) -> Record:
-        comfy_server = _schedule_comfy_server()
-        text = params.get('text')
-        image_base64 = params.get('image')
+    async def img2img(client_task_id: str, client_callback_url: str, params: dict) -> ComfyUIRecord:
+        comfyui_server = _get_comfyui_server()
+        text = params.get("text")
+        image_base64 = params.get("image")
 
         # upload image to comfyui
         image_bytes = base64.b64decode(image_base64)
-        resp = await comfy_server.upload_image(image_bytes)
-        image_path = resp['name']
-        if resp['subfolder']:
+        resp = await comfyui_server.upload_image(image_bytes)
+        image_path = resp["name"]
+        if resp["subfolder"]:
             image_path = f"{resp['subfolder']}/{image_path}"
 
         # create prompt
-        prompt_str = IMG2IMG_PROMPT_TEMPLATE.substitute(text=text, image=image_path)
+        prompt_str = IMG2IMG_COMFYUI_PROMPT_TEMPLATE.substitute(text=text, image=image_path)
         prompt_json = json.loads(prompt_str)
         try:
-            return await comfy_server.queue_prompt(client_task_id, prompt_json)
+            return await comfyui_server.queue_prompt(client_task_id, client_callback_url, prompt_json)
         finally:
             # clean up the input file after the prompt is queued
-            await comfy_server.clean_file(is_input=True, image_path=image_path)
+            await comfyui_server.clean_local_file(is_input=True, image_path=image_path)
 ```
 The `Service` class contains the service functions that can be provided. The above are two examples.
 
@@ -150,10 +152,8 @@ The workflow templates are stored in `src/workflows`, which can be configured ac
 The code could be found in `src/s3`, it's just a basic encapsulation of the aiobotocore library.
 
 ### Webhook
-In this system setup, a client-side `client_url` needs to be configured in the environment variable, 
-and every time the client sends a request, it must include the client's `client_task_id`. 
-When this service detects that ComfyUI has completed a prompt processing information and sent the file to S3 storage, 
-it will access the `client_url/client_task_id` and include detailed result information in the request body.
+When the image generation is complete, the ComfyUI server will send a message to the client through the websocket. 
+After retrieving the image and, record in database and upload to s3, the server will send a request to the client's callback url.
 
 ### clean local input and output images
 Please refer to this custom node of ComfyUI: [https://github.com/Poseidon-fan/ComfyUI-fileCleaner](https://github.com/Poseidon-fan/ComfyUI-fileCleaner)
@@ -161,14 +161,18 @@ Please refer to this custom node of ComfyUI: [https://github.com/Poseidon-fan/Co
 ### record task flow and save error files 
 I use postgres as rdb to record these information:
 
-| field          | introduction                       |
-|----------------|------------------------------------|
-| client_task_id | the task id sent from the client   |
-| comfy_task_id  | the prompt_id generated by ComfyUI |
-| s3_key         | key of the s3 object               |
-| comfy_filepath | image path locally                 |
+| field               | introduction                       |
+|---------------------|------------------------------------|
+| id                  | primary key                        |
+| client_task_id      | the task id sent from the client   |
+| client_callback_url | web hook url                       |
+| comfyui_task_id     | the prompt_id generated by ComfyUI |
+| s3_key              | key of the s3 object               |
+| comfy_filepath      | image path locally                 |
+| error_code          | error code of process              |                     |
 
-when there's an error when uploading to s3 or webhook, the error file will be saved in the fallback path. Its path is the same as comfy_filepath.
+when there's an error in the process, the error file will be saved in the fallback path and record according error_code.
+Its path is the same as comfy_filepath.
 
 ## How to add a new workflow
 Here, I take the example of the text production workflow of the flux model in the repository.
@@ -185,21 +189,25 @@ Now you can use the new workflow in your application.
 The base request json format is:
 ```json
 {
-    "service_type": "service type. example: text2img",
+    "service_type": "text2img",
+    "client_callback_url": "http://localhost:9000/callback",
     "params": {
         // based on your workflow
-        "text": "prompt text",
+        "text": "2capys",
         "image": "base64_format "
     },
-    "client_task_id": 1  // task id from client
+    "client_task_id": "commonly a uuid"
 }
 ```
 The immediate response and the webhook request format is:
 ```json
 {
-  "comfy_task_id": "d8f9e16e-af8a-4315-9584-5e669bbdf3af", 
-  "s3_key": "fa39816b-e89f-4702-bce6-24351825e2ae.png", 
-  "client_task_id": 101, 
-  "comfy_filepath": "ComfyUI_00157_.png"
+    "client_task_id": "commonly a uuid",
+    "comfyui_task_id": "d7622ce4-e89d-4f25-a83d-9a21337267f9",
+    "s3_key": "4270f289-7610-4782-9047-0b0b3899ddfc.png",
+    "client_callback_url": "http://localhost:9000/callback",
+    "comfyui_filepath": "ComfyUI_00256_.png",
+    "id": 3,
+    "error_code": 0
 }
 ```

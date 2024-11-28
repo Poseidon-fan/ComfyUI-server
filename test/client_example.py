@@ -6,9 +6,10 @@ from fastapi import FastAPI
 
 app = FastAPI()
 
-@app.post("/callback/{client_task_id}")
-async def callback(client_task_id: int, data: dict):
-    print(f'callback client task id: {client_task_id}, data: {data}')
+
+@app.post("/callback")
+async def callback(data: dict):
+    print(f"callback client data: {data}")
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 from string import Template
 
-_CLEAN_FILE_PROMPT = """{
+_CLEAN_LOCAL_FILE_PROMPT = """{
   "6": {
     "inputs": {
       "type": "$type",
@@ -13,4 +13,4 @@ _CLEAN_FILE_PROMPT = """{
   }
 }"""
 
-CLEAN_FILE_PROMPT_TEMPLATE = Template(_CLEAN_FILE_PROMPT)
+CLEAN_LOCAL_FILE_PROMPT_TEMPLATE = Template(_CLEAN_LOCAL_FILE_PROMPT)

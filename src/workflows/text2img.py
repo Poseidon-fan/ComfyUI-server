@@ -1,6 +1,6 @@
 from string import Template
 
-_TEXT2IMG_PROMPT = """{
+_TEXT2IMG_COMFYUI_PROMPT = """{
   "6": {
     "inputs": {
       "text": "$text",
@@ -193,4 +193,4 @@ _TEXT2IMG_PROMPT = """{
 }
 """
 
-TEXT2IMG_PROMPT_TEMPLATE = Template(_TEXT2IMG_PROMPT)
+TEXT2IMG_COMFYUI_PROMPT_TEMPLATE = Template(_TEXT2IMG_COMFYUI_PROMPT)
