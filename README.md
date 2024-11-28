@@ -189,14 +189,14 @@ Now you can use the new workflow in your application.
 The base request json format is:
 ```json
 {
-    "service_type": "text2img",
-    "client_callback_url": "http://localhost:9000/callback",
+    "service_type": "text2img",  // service type
+    "client_callback_url": "http://localhost:9000/callback",  // callback url
     "params": {
         // based on your workflow
         "text": "2capys",
         "image": "base64_format "
     },
-    "client_task_id": "commonly a uuid"
+    "client_task_id": "commonly a uuid"  // client task id
 }
 ```
 The immediate response and the webhook request format is:
